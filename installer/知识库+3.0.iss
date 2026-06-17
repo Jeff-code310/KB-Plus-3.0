@@ -26,6 +26,8 @@ DisableProgramGroupPage=yes
 WizardStyle=modern
 ShowLanguageDialog=no
 LanguageDetectionMethod=none
+CloseApplications=yes
+RestartApplications=yes
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
