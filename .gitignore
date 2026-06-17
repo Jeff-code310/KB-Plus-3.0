@@ -45,8 +45,6 @@ debug_*.py
 # Parent project files (not part of 知识库+3.0)
 file_search_app.py
 installer.iss
-README.md
-LICENSE
 优化方案.md
 build.bat
 config_template.json
