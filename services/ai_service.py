@@ -143,7 +143,7 @@ def call_ollama(question: str, kb_content: str, web_content: str,
         "model": config["model"],
         "messages": messages,
         "stream": True,
-        "options": {"temperature": 0.15, "num_predict": 1024},
+        "options": {"temperature": 0.1, "num_predict": 512},
     }
     try:
         response = requests.post(config["api_url"], json=data, timeout=60, stream=True)
@@ -217,7 +217,7 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
         "model": config["model"],
         "messages": messages,
         "temperature": 0.7,
-        "max_tokens": 2048,
+        "max_tokens": 1024,
         "stream": True,
     }
 
@@ -283,9 +283,8 @@ def call_zhipu_websearch(question: str, kb_content: str, api_key: str,
             {"role": "system", "content": _build_zhipu_system_prompt(kb_content)},
             {"role": "user", "content": question},
         ],
-        "tools": [{"type": "web_search", "web_search": {}}],
         "stream": True,
-        "temperature": 0.7,
+        "temperature": 0.4,
     }
 
     try:

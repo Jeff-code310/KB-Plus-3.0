@@ -50,6 +50,12 @@ AI_CONFIGS = {
         "model": "glm-4-flash",
         "need_key": True,
     },
+    "sensenova": {
+        "name": "SenseNova (商汤)",
+        "api_url": "https://token.sensenova.cn/v1/chat/completions",
+        "model": "SenseChat-5",
+        "need_key": True,
+    },
 }
 
 TEXT_CONTENT_EXTENSIONS = frozenset({

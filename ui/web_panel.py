@@ -340,16 +340,22 @@ class WebPanel:
         conv["messages"].append({"role": "user", "text": question})
 
         self._chat_widget.config(state="normal")
-        self._chat_widget.delete("1.0", "end")
+
+        text_inserted = False
         for msg in conv["messages"]:
             role = msg.get("role", "")
-            text = msg.get("text", "")
+            t = msg.get("text", "")
             if role == "user":
-                self._chat_widget.insert("end", text + "\n", "user")
+                self._chat_widget.insert("end", t + "\n", "user")
+                text_inserted = True
             elif role == "assistant":
-                if text:
+                if t:
                     self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
-                    self._chat_widget.insert("end", text + "\n", "ai")
+                    self._chat_widget.insert("end", t + "\n", "ai")
+                    text_inserted = True
+
+        if not text_inserted:
+            self._chat_widget.insert("end", question + "\n", "user")
 
         self._ai_start_pos = None
         self._first_chunk = True
@@ -440,7 +446,7 @@ class WebPanel:
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
                 )
-            if self._ai_provider in ("lm_studio", "gpt4all", "deepseek_api"):
+            if self._ai_provider in ("lm_studio", "gpt4all", "deepseek_api", "sensenova"):
                 return call_openai_compat(
                     self._ai_provider, question, kb_content, web_content,
                     api_key=self._api_key,
@@ -463,22 +469,24 @@ class WebPanel:
     def _stream_update(self, text: str) -> None:
         try:
             self._chat_widget.config(state="normal")
-
             if self._first_chunk:
                 self._stop_loading()
                 if self._loading_pos:
                     self._chat_widget.delete(self._loading_pos, "end-1c")
                     self._ai_start_pos = self._chat_widget.index("end-1c")
-                else:
-                    self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
-                    self._ai_start_pos = self._chat_widget.index("end-1c")
                 self._chat_widget.insert(self._ai_start_pos, text, "ai")
                 self._stream_buffer = text
                 self._first_chunk = False
             else:
-                self._chat_widget.delete(self._ai_start_pos, "end-1c")
-                self._chat_widget.insert(self._ai_start_pos, text, "ai")
-                self._stream_buffer = text
+                prev = self._stream_buffer
+                if len(text) > len(prev):
+                    new_part = text[len(prev):]
+                    self._chat_widget.insert("end", new_part, "ai")
+                    self._stream_buffer = text
+                elif text != prev:
+                    self._chat_widget.delete(self._ai_start_pos, "end-1c")
+                    self._chat_widget.insert(self._ai_start_pos, text, "ai")
+                    self._stream_buffer = text
 
             self._chat_widget.config(state="disabled")
             self._auto_scroll()
@@ -499,6 +507,16 @@ class WebPanel:
                 except Exception:
                     pass
             return
+
+        try:
+            self._chat_widget.config(state="normal")
+            if self._ai_start_pos:
+                self._chat_widget.delete(self._ai_start_pos, "end-1c")
+                self._chat_widget.insert(self._ai_start_pos, text, "ai")
+            self._stream_buffer = text
+            self._chat_widget.config(state="disabled")
+        except Exception:
+            pass
 
         if self._active_conv_id:
             conv = self._conversations.get(self._active_conv_id)
