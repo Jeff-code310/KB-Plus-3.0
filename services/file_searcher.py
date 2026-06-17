@@ -78,5 +78,5 @@ class FileSearcher:
         kb_parts.sort(key=lambda x: -x[0])
         result_parts = []
         for score, fname, snippet in kb_parts[:3]:
-            result_parts.append(f"【知识库 - {fname}】{snippet}")
+            result_parts.append(f"【KB】【知识库 - {fname}】{snippet}")
         return "\n\n---\n".join(result_parts)

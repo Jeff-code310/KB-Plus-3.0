@@ -21,7 +21,7 @@ COLORS = {
 AI_CONFIGS = {
     "ollama": {
         "name": "本地Ollama",
-        "api_url": "http://localhost:11434/api/generate",
+        "api_url": "http://localhost:11434/api/chat",
         "model": "qwen2.5:3b",
     },
     "lm_studio": {
