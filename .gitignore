@@ -1,0 +1,62 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution
+build/
+dist/
+*.spec
+*.egg-info/
+*.egg
+
+# Inno Setup output
+installer_output/
+
+# Logs
+logs/
+*.log
+
+# Config
+config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Virtual env
+venv/
+.venv/
+
+# Test / temp files
+test_*.py
+trace_*.txt
+debug_*.py
+*.bak
+*.tmp
+
+# Parent project files (not part of 知识库+3.0)
+file_search_app.py
+installer.iss
+README.md
+LICENSE
+优化方案.md
+build.bat
+config_template.json
+app_icon_fixed.ico
+app_icon_preview.png
+app_icon_soft.png
+app_icon_v2.ico
+app_icon_v3.ico
+app_icon_v4.ico
+app_icon_v5.ico
+app_icon_win.ico
+app_icon正式_preview.png
+tools/
