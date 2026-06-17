@@ -27,6 +27,7 @@ class WebPanel:
         self._answer_cancelled: bool = False
         self._current_answer_entry: tk.Text | None = None
         self._stream_initialized: bool = False
+        self._last_rendered_len: int = 0
 
         self.web_var = tk.StringVar()
 
@@ -118,7 +119,7 @@ class WebPanel:
             lambda e: self._canvas.itemconfig("inner", width=e.width - 8),
         )
         self._canvas.configure(yscrollcommand=scrollbar.set)
-        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
 
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -205,6 +206,7 @@ class WebPanel:
         self.send_btn.config(text="\u25B6 发送", bg=COLORS["primary"])
         self._current_answer_entry = None
         self._stream_initialized = False
+        self._last_rendered_len = 0
 
         conv_id = _next_conv_id()
         self._conversations[conv_id] = {
@@ -260,6 +262,7 @@ class WebPanel:
     def _load_conv_messages(self, conv_id: str) -> None:
         self._current_answer_entry = None
         self._stream_initialized = False
+        self._last_rendered_len = 0
         conv = self._conversations.get(conv_id)
         if conv is None:
             return
@@ -312,7 +315,6 @@ class WebPanel:
             bg="white", fg=COLORS["text"],
             wrap="word", bd=0, relief="flat",
             padx=16, pady=10,
-            height=4,
         )
         aw.pack(fill=tk.X)
         configure_answer_tags(aw)
@@ -389,7 +391,6 @@ class WebPanel:
             bg="white", fg=COLORS["text"],
             wrap="word", bd=0, relief="flat",
             padx=16, pady=10,
-            height=4,
         )
         self._current_answer_entry.pack(fill=tk.X)
         configure_answer_tags(self._current_answer_entry)
@@ -483,9 +484,13 @@ class WebPanel:
             if not self._stream_initialized:
                 widget.delete("1.0", "end")
                 self._stream_initialized = True
-            else:
-                widget.delete("1.0", "end")
-            render_rich_text(widget, text)
+                self._last_rendered_len = 0
+            new_chunk = text[self._last_rendered_len:]
+            if new_chunk:
+                widget.insert("end", new_chunk)
+                self._last_rendered_len = len(text)
+                lines = int(widget.index("end-1c").split(".")[0])
+                widget.config(height=min(max(4, lines + 1), 40))
             widget.config(state="disabled")
             self._auto_scroll()
         except Exception:
@@ -503,6 +508,8 @@ class WebPanel:
             widget.config(state="normal")
             widget.delete("1.0", "end")
             render_rich_text(widget, text)
+            lines = int(widget.index("end-1c").split(".")[0])
+            widget.config(height=min(max(4, lines + 1), 40))
             widget.config(state="disabled")
             self._auto_scroll()
         except Exception:

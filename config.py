@@ -76,18 +76,22 @@ def detect_local_ai_services() -> list[dict]:
     import requests
     services: list[dict] = []
 
+    ollama_available = False
+    ollama_models = []
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=2)
         if r.status_code == 200:
-            models = [m["name"] for m in r.json().get("models", [])]
-            services.append({
-                "id": "ollama", "name": "Ollama (本地)",
-                "api_url": "http://localhost:11434/api/generate",
-                "models": models, "available": True,
-            })
-            logging.info(f"检测到Ollama服务，模型: {models}")
+            ollama_models = [m["name"] for m in r.json().get("models", [])]
+            ollama_available = True
+            logging.info(f"检测到Ollama服务，模型: {ollama_models}")
     except Exception as e:
         logging.warning(f"Ollama检测失败: {e}")
+    services.append({
+        "id": "ollama", "name": "Ollama (本地)",
+        "api_url": "http://localhost:11434/api/chat",
+        "models": ollama_models or ["qwen2.5:3b"],
+        "available": ollama_available,
+    })
 
     try:
         r = requests.get("http://localhost:1234/v1/models", timeout=2)
