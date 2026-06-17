@@ -35,9 +35,12 @@ Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.i
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式:"; Flags: checkedonce
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\知识库文件"
+
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\sample_files\知识库文件\*"; DestDir: "{app}\知识库文件"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "..\sample_files\知识库文件\*"; DestDir: "{app}\知识库文件"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 
 [Icons]
 Name: "{autoprograms}\知识库+3.0"; Filename: "{app}\{#MyAppExeName}"
