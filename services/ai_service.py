@@ -134,8 +134,11 @@ def _build_ollama_messages(question: str, kb_content: str, web_content: str) -> 
 
 def call_ollama(question: str, kb_content: str, web_content: str,
                 stream_callback: callable = None, cancelled_flag: callable = lambda: False,
-                history: list[dict] | None = None) -> str:
-    config = AI_CONFIGS["ollama"]
+                history: list[dict] | None = None,
+                custom_config: dict | None = None) -> str:
+    config = dict(AI_CONFIGS["ollama"])
+    if custom_config:
+        config.update(custom_config)
     messages = _build_ollama_messages(question, kb_content, web_content)
     if history:
         messages = messages[:1] + history + messages[1:]
@@ -160,20 +163,24 @@ def call_ollama(question: str, kb_content: str, web_content: str,
                             data_str = line_str[6:]
                             if data_str.strip() == "[DONE]":
                                 break
-                            chunk_json = json.loads(data_str)
-                            content = ""
-                            if "message" in chunk_json:
-                                content = chunk_json["message"].get("content", "")
-                            elif "response" in chunk_json:
-                                content = chunk_json["response"]
-                            if content:
-                                full_response.append(content)
-                                current = "".join(full_response)
-                                new_chars = len(current) - last_stream_len
-                                if new_chars >= 1 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 8:
-                                    last_stream_len = len(current)
-                                    if stream_callback:
-                                        stream_callback(current)
+                        else:
+                            data_str = line_str
+                            if data_str == "done" or '"done":true' in data_str:
+                                break
+                        chunk_json = json.loads(data_str)
+                        content = ""
+                        if "message" in chunk_json:
+                            content = chunk_json["message"].get("content", "")
+                        elif "response" in chunk_json:
+                            content = chunk_json["response"]
+                        if content:
+                            full_response.append(content)
+                            current = "".join(full_response)
+                            new_chars = len(current) - last_stream_len
+                            if new_chars >= 1 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 8:
+                                last_stream_len = len(current)
+                                if stream_callback:
+                                    stream_callback(current)
                     except json.JSONDecodeError:
                         pass
                     except Exception:
@@ -194,10 +201,14 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
                        web_content: str, api_key: str = "",
                        stream_callback: callable = None,
                        cancelled_flag: callable = lambda: False,
-                       history: list[dict] | None = None) -> str:
-    config = AI_CONFIGS.get(provider)
-    if not config:
+                       history: list[dict] | None = None,
+                       custom_config: dict | None = None) -> str:
+    base_config = AI_CONFIGS.get(provider)
+    if not base_config:
         return "AI服务配置错误，请检查设置"
+    config = dict(base_config)
+    if custom_config:
+        config.update(custom_config)
 
     headers = {"Content-Type": "application/json"}
     if config.get("need_key"):
@@ -269,10 +280,14 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
 
 def call_zhipu_websearch(question: str, kb_content: str, api_key: str,
                          stream_callback: callable = None,
-                         cancelled_flag: callable = lambda: False) -> str:
-    config = AI_CONFIGS.get("zhipu_cloud")
-    if not config:
+                         cancelled_flag: callable = lambda: False,
+                         custom_config: dict | None = None) -> str:
+    base_config = AI_CONFIGS.get("zhipu_cloud")
+    if not base_config:
         return ""
+    config = dict(base_config)
+    if custom_config:
+        config.update(custom_config)
     if not api_key:
         return ""
 

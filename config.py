@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict = {
     "kb_local_path": os.path.join(APP_DIR, "知识库文件") if getattr(sys, 'frozen', False) else os.path.join(APP_DIR, "sample_files", "知识库文件"),
     "kb_nas_path": "",
     "recent_searches": [],
+    "ai_custom_config": {},
 }
 
 

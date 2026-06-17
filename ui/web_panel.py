@@ -425,6 +425,7 @@ class WebPanel:
                     web_results: list[dict]) -> None:
         conv = self._conversations.get(self._active_conv_id) if self._active_conv_id else None
         history = conv["history"].copy() if conv and conv["history"] else None
+        custom_config = self._config.get("ai_custom_config", {}).get(self._ai_provider)
 
         def stream_callback(raw_text: str) -> None:
             if self._answer_cancelled:
@@ -439,12 +440,14 @@ class WebPanel:
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
                     history=history,
+                    custom_config=custom_config,
                 )
             if self._ai_provider == "zhipu_cloud":
                 return call_zhipu_websearch(
                     question, kb_content, self._api_key,
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
+                    custom_config=custom_config,
                 )
             if self._ai_provider in ("lm_studio", "gpt4all", "deepseek_api", "sensenova"):
                 return call_openai_compat(
@@ -453,18 +456,16 @@ class WebPanel:
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
                     history=history,
+                    custom_config=custom_config,
                 )
             return "请先在设置中选择一个可用的AI服务"
 
         try:
-            final_text = ai_call()
-            cleaned = _clean_text(final_text) if final_text else ""
-            if cleaned and not self._answer_cancelled:
+                final_text = ai_call()
+                cleaned = _clean_text(final_text) if final_text else ""
                 self._parent.after(0, lambda: self._finalize_answer(cleaned))
-            elif self._answer_cancelled:
-                self._parent.after(0, lambda: self._finalize_answer(""))
         except Exception as e:
-            self._parent.after(0, lambda: self._finalize_answer(""))
+                self._parent.after(0, lambda: self._finalize_answer(f"[错误] AI调用失败：{str(e)}"))
 
     def _stream_update(self, text: str) -> None:
         try:

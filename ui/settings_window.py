@@ -73,25 +73,98 @@ class SettingsWindow:
     def _create_ai_radios(self) -> None:
         if self._ai_frame:
             for widget in self._ai_frame.winfo_children():
-                if isinstance(widget, tk.Radiobutton):
-                    widget.destroy()
+                widget.destroy()
 
         available_ids = [s["id"] for s in self._available_services]
-        for service_id, config in AI_CONFIGS.items():
+        for service_id, conf in AI_CONFIGS.items():
+            provider_frame = tk.Frame(self._ai_frame, bg="white")
+            provider_frame.pack(fill="x", padx=20, pady=2)
+
             is_available = service_id in available_ids
-            need_key = config.get("need_key")
+            need_key = conf.get("need_key")
             state = "normal" if (is_available or need_key) else "disabled"
             if need_key:
-                text = config["name"]
+                text = conf["name"]
             elif is_available:
-                text = f"{config['name']} (已检测)"
+                text = f"{conf['name']} (已检测)"
             else:
-                text = f"{config['name']} (未安装)"
+                text = f"{conf['name']} (未安装)"
             tk.Radiobutton(
-                self._ai_frame, text=text,
+                provider_frame, text=text,
                 variable=self._ai_service_var,
                 value=service_id, state=state, bg="white",
-            ).pack(anchor="w", padx=20)
+            ).pack(side="left")
+
+            tk.Button(
+                provider_frame, text="\u2699 配置",
+                font=("Microsoft YaHei UI", 8),
+                bg="#E2E8F0", fg="#475569",
+                bd=1, relief="solid", cursor="hand2",
+                padx=6, pady=1,
+                command=lambda sid=service_id: self._edit_provider_config(sid),
+            ).pack(side="right", padx=(8, 0))
+
+    def _edit_provider_config(self, provider_id: str) -> None:
+        sub = tk.Toplevel(self._win)
+        sub.title(f"配置 - {AI_CONFIGS[provider_id]['name']}")
+        sub.geometry("500x250")
+        sub.configure(bg="white")
+        sub.resizable(False, False)
+
+        custom_config = self._config.get("ai_custom_config", {}).get(provider_id, {})
+        default_conf = AI_CONFIGS[provider_id]
+
+        api_url_var = tk.StringVar(value=custom_config.get("api_url", default_conf["api_url"]))
+        model_var = tk.StringVar(value=custom_config.get("model", default_conf["model"]))
+
+        tk.Label(sub, text="API 接口地址:",
+                 font=("Microsoft YaHei UI", 10), bg="white",
+                 anchor="w").pack(fill="x", padx=20, pady=(20, 5))
+        tk.Entry(sub, textvariable=api_url_var,
+                 font=("Microsoft YaHei UI", 10)).pack(fill="x", padx=20)
+
+        tk.Label(sub, text="模型名称:",
+                 font=("Microsoft YaHei UI", 10), bg="white",
+                 anchor="w").pack(fill="x", padx=20, pady=(15, 5))
+        tk.Entry(sub, textvariable=model_var,
+                 font=("Microsoft YaHei UI", 10)).pack(fill="x", padx=20)
+
+        tk.Label(sub,
+                 text="\u24D8 修改后需要保存设置才能生效",
+                 font=("Microsoft YaHei UI", 9), fg="#94A3B8", bg="white",
+                 anchor="w").pack(fill="x", padx=20, pady=(10, 0))
+
+        btn_frame = tk.Frame(sub, bg="white")
+        btn_frame.pack(fill="x", padx=20, pady=(15, 0))
+
+        def do_save():
+            if "ai_custom_config" not in self._config:
+                self._config["ai_custom_config"] = {}
+            self._config["ai_custom_config"][provider_id] = {
+                "api_url": api_url_var.get().strip(),
+                "model": model_var.get().strip(),
+            }
+            sub.destroy()
+
+        def do_reset():
+            api_url_var.set(default_conf["api_url"])
+            model_var.set(default_conf["model"])
+
+        tk.Button(btn_frame, text="保存",
+                  font=("Microsoft YaHei UI", 10, "bold"),
+                  bg=COLORS["primary"], fg="white",
+                  bd=0, padx=20, pady=4, cursor="hand2",
+                  command=do_save).pack(side="right", padx=(5, 0))
+        tk.Button(btn_frame, text="恢复默认",
+                  font=("Microsoft YaHei UI", 10),
+                  bg="#E2E8F0", fg="#475569",
+                  bd=0, padx=16, pady=4, cursor="hand2",
+                  command=do_reset).pack(side="right", padx=(5, 0))
+        tk.Button(btn_frame, text="取消",
+                  font=("Microsoft YaHei UI", 10),
+                  bg="#64748B", fg="white",
+                  bd=0, padx=16, pady=4, cursor="hand2",
+                  command=sub.destroy).pack(side="right")
 
     def refresh_ai_ui(self, available_services: list[dict]) -> None:
         self._available_services = available_services
