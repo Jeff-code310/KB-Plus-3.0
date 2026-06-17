@@ -37,6 +37,20 @@ def _build_zhipu_system_prompt(kb_content: str) -> str:
     return prompt
 
 
+def _iter_sse_lines(response):
+    buffer = ""
+    for chunk in response.iter_content(chunk_size=1, decode_unicode=False):
+        if not chunk:
+            continue
+        buffer += chunk.decode("utf-8", errors="replace")
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            if line.startswith("data: "):
+                yield line[6:]
+                if line[6:].strip() == "[DONE]":
+                    return
+
+
 def call_ollama(question: str, kb_content: str, web_content: str,
                 stream_callback: callable = None, cancelled_flag: callable = lambda: False) -> str:
     config = AI_CONFIGS["ollama"]
@@ -45,7 +59,7 @@ def call_ollama(question: str, kb_content: str, web_content: str,
         "model": config["model"],
         "prompt": prompt,
         "stream": True,
-        "options": {"temperature": 0.7, "num_predict": 2000},
+        "options": {"temperature": 0.3, "num_predict": 1024},
     }
     try:
         response = requests.post(config["api_url"], json=data, timeout=60, stream=True)
@@ -65,7 +79,7 @@ def call_ollama(question: str, kb_content: str, web_content: str,
                                 full_response.append(token)
                                 current = "".join(full_response)
                                 new_chars = len(current) - last_stream_len
-                                if new_chars >= 50 or token in "。！？!?；，、\n":
+                                if new_chars >= 3 or token in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
                                     last_stream_len = len(current)
                                     if stream_callback:
                                         stream_callback(current)
@@ -85,6 +99,7 @@ def call_ollama(question: str, kb_content: str, web_content: str,
 
 def call_openai_compat(provider: str, question: str, kb_content: str,
                        web_content: str, api_key: str = "",
+                       stream_callback: callable = None,
                        cancelled_flag: callable = lambda: False) -> str:
     config = AI_CONFIGS.get(provider)
     if not config:
@@ -101,17 +116,44 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
         "model": config["model"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7,
-        "max_tokens": 2000,
+        "max_tokens": 1024,
+        "stream": True,
     }
 
     try:
-        response = requests.post(config["api_url"], headers=headers, json=data, timeout=60)
+        response = requests.post(config["api_url"], headers=headers, json=data, timeout=60, stream=True)
         if response.status_code == 200:
-            result = response.json()
-            choices = result.get("choices", [])
-            if choices:
-                return choices[0].get("message", {}).get("content", "")
-            return "AI返回格式异常：未找到回答内容"
+            full_response: list[str] = []
+            last_stream_len = 0
+            for line in response.iter_lines():
+                if cancelled_flag():
+                    break
+                if line:
+                    try:
+                        line_str = line.decode("utf-8", errors="replace").strip()
+                        if line_str.startswith("data: "):
+                            data_str = line_str[6:]
+                            if data_str.strip() == "[DONE]":
+                                break
+                            chunk = json.loads(data_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                full_response.append(content)
+                                current = "".join(full_response)
+                                new_chars = len(current) - last_stream_len
+                                if new_chars >= 3 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
+                                    last_stream_len = len(current)
+                                    if stream_callback:
+                                        stream_callback(current)
+                    except json.JSONDecodeError:
+                        pass
+                    except Exception:
+                        pass
+            result_text = "".join(full_response)
+            if stream_callback:
+                stream_callback(result_text)
+            return result_text
         elif response.status_code == 401:
             return "API Key错误或无权限，请检查设置"
         elif response.status_code == 429:
@@ -159,7 +201,6 @@ def call_zhipu_websearch(question: str, kb_content: str, api_key: str,
             return ""
 
         full_response: list[str] = []
-        answer_text = ""
         last_stream_len = 0
 
         for line in response.iter_lines():
@@ -179,7 +220,7 @@ def call_zhipu_websearch(question: str, kb_content: str, api_key: str,
                             full_response.append(content)
                             current = "".join(full_response)
                             new_chars = len(current) - last_stream_len
-                            if new_chars >= 5 or content in "。！？!?；，、\n":
+                            if new_chars >= 3 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
                                 last_stream_len = len(current)
                                 if stream_callback:
                                     stream_callback(current)

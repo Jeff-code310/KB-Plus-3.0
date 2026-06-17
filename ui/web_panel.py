@@ -17,6 +17,8 @@ class WebPanel:
         self._searcher = FileSearcher()
         self._is_answering: bool = False
         self._answer_cancelled: bool = False
+        self._kb_cache: str = ""
+        self._kb_cached: bool = False
 
         self.web_var = tk.StringVar()
 
@@ -136,15 +138,55 @@ class WebPanel:
         threading.Thread(target=self._answer_thread, args=(question,), daemon=True).start()
 
     def _answer_thread(self, question: str) -> None:
-        kb_content = self._searcher.search_kb_for_question(question, self._config)
-        web_results = search_bing(question, num_results=3)
-        web_parts = []
-        for i, r in enumerate(web_results, 1):
-            if r.get("title") and r.get("url"):
-                web_parts.append(f"[网页{i}] 标题: {r['title']}\n内容摘要: {r.get('description', '')}\n链接: {r['url']}")
+        kb_content = self._kb_cache if self._kb_cached else ""
+        web_results: list[dict] = []
+        web_parts: list[str] = []
+
+        def do_kb():
+            nonlocal kb_content
+            kb_content = self._searcher.search_kb_for_question(question, self._config)
+            self._kb_cache = kb_content
+            self._kb_cached = True
+
+        def do_web():
+            nonlocal web_results, web_parts
+            web_results = search_bing(question, num_results=3)
+            parts = []
+            for i, r in enumerate(web_results, 1):
+                if r.get("title") and r.get("url"):
+                    parts.append(f"[网页{i}] 标题: {r['title']}\n内容摘要: {r.get('description', '')}\n链接: {r['url']}")
+            web_parts = parts
+
+        t_kb = threading.Thread(target=do_kb, daemon=True)
+        t_web = threading.Thread(target=do_web, daemon=True)
+        t_kb.start()
+        t_web.start()
+
+        self._parent.after(0, lambda: self._show_stage_hint("\U0001F50D 正在检索知识库 + 联网搜索..."))
+        t_kb.join(timeout=8)
+        t_web.join(timeout=8)
+
         web_content = "\n\n".join(web_parts) if web_parts else ""
 
         self._parent.after(200, lambda: self._render_answer(question, kb_content, web_content, web_results))
+
+    def _show_stage_hint(self, text: str) -> None:
+        try:
+            if not hasattr(self, "thinking_frame") or not self.thinking_frame.winfo_exists():
+                return
+            for w in self.thinking_frame.winfo_children():
+                if isinstance(w, tk.Label) and getattr(w, "_is_hint", False):
+                    w.config(text=text)
+                    return
+            hint = tk.Label(
+                self.thinking_frame, text=text,
+                font=("Microsoft YaHei UI", 11),
+                fg=COLORS["text_light"], bg="white",
+            )
+            hint._is_hint = True
+            hint.pack()
+        except Exception:
+            pass
 
     def _render_answer(self, question: str, kb_content: str, web_content: str,
                        web_results: list[dict]) -> None:
@@ -178,7 +220,7 @@ class WebPanel:
         )
         self.answer_text.pack(fill=tk.BOTH, expand=True)
         configure_answer_tags(self.answer_text)
-        self.answer_text.insert("end", "\u2728 正在生成专业回答，可能需要几秒钟...", "para")
+        self.answer_text.insert("end", "\u2728 正在生成专业回答...", "para")
         self.answer_text.config(state="disabled")
 
         self._call_ai_service(question, kb_content, web_content, web_results)
@@ -207,6 +249,7 @@ class WebPanel:
                 return call_openai_compat(
                     self._ai_provider, question, kb_content, web_content,
                     api_key=self._api_key,
+                    stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
                 )
             return "请先在设置中选择一个可用的AI服务"
