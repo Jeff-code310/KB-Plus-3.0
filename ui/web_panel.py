@@ -1,3 +1,4 @@
+import re
 import threading
 import tkinter as tk
 
@@ -5,7 +6,6 @@ from constants import COLORS
 from services.ai_service import call_ollama, call_openai_compat, call_zhipu_websearch
 from services.web_searcher import search_bing
 from services.file_searcher import FileSearcher
-from ui.widgets import configure_answer_tags, render_rich_text
 
 _conv_counter = 0
 
@@ -14,6 +14,16 @@ def _next_conv_id() -> str:
     global _conv_counter
     _conv_counter += 1
     return f"conv_{_conv_counter}"
+
+
+def _clean_text(text: str) -> str:
+    text = re.sub(r'[*#`_~]', '', text)
+    text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', text)
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 class WebPanel:
@@ -25,12 +35,16 @@ class WebPanel:
         self._searcher = FileSearcher()
         self._is_answering: bool = False
         self._answer_cancelled: bool = False
-        self._current_answer_entry: tk.Text | None = None
-        self._stream_initialized: bool = False
-        self._last_rendered_len: int = 0
+        self._stream_buffer: str = ""
+
+        self._chat_widget: tk.Text | None = None
+        self._loading_running: bool = False
+        self._loading_frame: int = 0
+        self._loading_pos: str | None = None
+        self._ai_start_pos: str | None = None
+        self._first_chunk: bool = True
 
         self.web_var = tk.StringVar()
-
         self._conversations: dict[str, dict] = {}
         self._active_conv_id: str | None = None
 
@@ -124,25 +138,39 @@ class WebPanel:
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self._build_welcome()
+        self._build_chat_widget()
 
-    def _build_welcome(self) -> None:
-        f = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
-        f.pack(expand=True, pady=(100, 0))
-        tk.Label(
-            f, text="\U0001F31F",
-            font=("Segoe UI Emoji", 36), bg=COLORS["bg"],
-        ).pack()
-        tk.Label(
-            f, text="向你提问",
-            font=("Microsoft YaHei UI", 14, "bold"),
-            fg=COLORS["text"], bg=COLORS["bg"],
-        ).pack(pady=(8, 4))
-        tk.Label(
-            f, text="AI 会结合知识库与联网搜索为你提供专业回答",
-            font=("Microsoft YaHei UI", 10),
-            fg=COLORS["text_light"], bg=COLORS["bg"],
-        ).pack()
+    def _build_chat_widget(self) -> None:
+        self._chat_widget = tk.Text(
+            self._scrollable_frame,
+            font=("Microsoft YaHei UI", 11),
+            bg=COLORS["bg"], fg=COLORS["text"],
+            wrap="word", bd=0, relief="flat",
+            padx=16, pady=12,
+            spacing1=4, spacing3=8,
+        )
+        self._chat_widget.pack(fill=tk.BOTH, expand=True)
+
+        self._chat_widget.tag_configure("user", justify="right", foreground=COLORS["text"],
+                                         font=("Microsoft YaHei UI", 11), spacing3=12,
+                                         background=COLORS["bg"])
+        self._chat_widget.tag_configure("ai", justify="left", foreground=COLORS["text"],
+                                        font=("Microsoft YaHei UI", 11), spacing3=8,
+                                        background=COLORS["bg"])
+        self._chat_widget.tag_configure("loading", justify="left", foreground="#94A3B8",
+                                        font=("Microsoft YaHei UI", 11, "italic"),
+                                        background=COLORS["bg"])
+        self._chat_widget.tag_configure("ai_icon", justify="left", foreground="#0EA5E9",
+                                        font=("Segoe UI Emoji", 10), background=COLORS["bg"])
+
+        self._show_welcome()
+
+    def _show_welcome(self) -> None:
+        self._chat_widget.insert("end", "\n\n\n\n\n")
+        self._chat_widget.insert("end", "  \U0001F31F\n\n", "loading")
+        self._chat_widget.insert("end", "  向你提问\n\n", "ai")
+        self._chat_widget.insert("end", "  AI 会结合知识库与联网搜索为你提供专业回答", "loading")
+        self._chat_widget.config(state="disabled")
 
     def _build_input_bar(self, parent: tk.Frame) -> None:
         bar = tk.Frame(parent, bg="white", height=56)
@@ -204,9 +232,10 @@ class WebPanel:
         self._is_answering = False
         self._answer_cancelled = False
         self.send_btn.config(text="\u25B6 发送", bg=COLORS["primary"])
-        self._current_answer_entry = None
-        self._stream_initialized = False
-        self._last_rendered_len = 0
+        self._stream_buffer = ""
+        self._first_chunk = True
+        self._loading_pos = None
+        self._ai_start_pos = None
 
         conv_id = _next_conv_id()
         self._conversations[conv_id] = {
@@ -217,9 +246,10 @@ class WebPanel:
         self._active_conv_id = conv_id
 
         self._sync_listbox()
-        for w in self._scrollable_frame.winfo_children():
-            w.destroy()
-        self._build_welcome()
+        self._chat_widget.config(state="normal")
+        self._chat_widget.delete("1.0", "end")
+        self._show_welcome()
+        self._chat_widget.config(state="disabled")
 
     def _on_conv_select(self, _: tk.Event = None) -> None:
         sel = self._conv_listbox.curselection()
@@ -250,76 +280,39 @@ class WebPanel:
         conv = self._conversations.get(self._active_conv_id)
         if conv is None:
             return
-
-        msgs = []
-        for child in self._scrollable_frame.winfo_children():
-            role = getattr(child, "_role", "")
-            text = getattr(child, "_text", "")
-            if role and text:
-                msgs.append({"role": role, "text": text})
-        conv["messages"] = msgs
+        if conv["messages"] and conv["messages"][-1]["role"] == "assistant":
+            if self._ai_start_pos:
+                text = self._chat_widget.get(self._ai_start_pos, "end-1c")
+                conv["messages"][-1]["text"] = text
 
     def _load_conv_messages(self, conv_id: str) -> None:
-        self._current_answer_entry = None
-        self._stream_initialized = False
-        self._last_rendered_len = 0
+        self._first_chunk = True
+        self._loading_pos = None
+        self._ai_start_pos = None
         conv = self._conversations.get(conv_id)
         if conv is None:
             return
 
-        for w in self._scrollable_frame.winfo_children():
-            w.destroy()
+        self._chat_widget.config(state="normal")
+        self._chat_widget.delete("1.0", "end")
 
         if not conv["messages"]:
-            self._build_welcome()
+            self._show_welcome()
+            self._chat_widget.config(state="disabled")
             return
 
         for msg in conv["messages"]:
             role = msg.get("role", "")
             text = msg.get("text", "")
             if role == "user":
-                self._rebuild_user_bubble(text)
+                self._chat_widget.insert("end", text + "\n", "user")
             elif role == "assistant":
-                self._rebuild_ai_bubble(text)
+                if text:
+                    self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
+                    self._chat_widget.insert("end", text + "\n", "ai")
 
+        self._chat_widget.config(state="disabled")
         self._auto_scroll()
-
-    def _rebuild_user_bubble(self, text: str) -> None:
-        self._add_user_bubble(text)
-        for child in self._scrollable_frame.winfo_children():
-            txt = getattr(child, "_question_text", "")
-            if txt == text:
-                child._text = text
-                break
-
-    def _rebuild_ai_bubble(self, text: str) -> None:
-        row = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
-        row.pack(fill=tk.X, pady=(4, 8))
-        row._role = "assistant"
-        row._text = text
-
-        icon = tk.Label(
-            row, text="\U0001F916",
-            font=("Segoe UI Emoji", 16), bg=COLORS["bg"],
-        )
-        icon.pack(side=tk.LEFT, padx=(4, 8))
-        icon.pack_propagate(False)
-        icon.configure(width=28, height=28)
-
-        bubble = tk.Frame(row, bg="white")
-        bubble.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-
-        aw = tk.Text(
-            bubble,
-            font=("Microsoft YaHei UI", 11),
-            bg="white", fg=COLORS["text"],
-            wrap="word", bd=0, relief="flat",
-            padx=16, pady=10,
-        )
-        aw.pack(fill=tk.X)
-        configure_answer_tags(aw)
-        render_rich_text(aw, text)
-        aw.config(state="disabled")
 
     # ── Answer flow ───────────────────────────────────
 
@@ -327,6 +320,8 @@ class WebPanel:
         question = self.web_var.get().strip()
         if question in ("", "向 AI 提问..."):
             return
+
+        self.web_entry.delete(0, tk.END)
 
         if not self._active_conv_id:
             self._new_conversation()
@@ -342,65 +337,57 @@ class WebPanel:
         self._answer_cancelled = False
         self.send_btn.config(text="\u25A0 停止", bg="#EF4444")
 
-        self._add_user_bubble(question)
-        self._add_ai_bubble()
+        conv["messages"].append({"role": "user", "text": question})
 
-        self._answer_thread(question)
+        self._chat_widget.config(state="normal")
+        self._chat_widget.delete("1.0", "end")
+        for msg in conv["messages"]:
+            role = msg.get("role", "")
+            text = msg.get("text", "")
+            if role == "user":
+                self._chat_widget.insert("end", text + "\n", "user")
+            elif role == "assistant":
+                if text:
+                    self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
+                    self._chat_widget.insert("end", text + "\n", "ai")
 
-    def _add_user_bubble(self, text: str) -> None:
-        row = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
-        row.pack(fill=tk.X, pady=(4, 0))
-        row._role = "user"
-        row._text = text
-        row._question_text = text
+        self._ai_start_pos = None
+        self._first_chunk = True
+        self._stream_buffer = ""
+        self._insert_loading()
+        self._start_loading_animation()
 
-        spacer = tk.Frame(row, bg=COLORS["bg"], width=60)
-        spacer.pack(side=tk.LEFT)
+        threading.Thread(target=self._background_flow, args=(question,), daemon=True).start()
 
-        bubble = tk.Frame(row, bg="#DBEAFE")
-        bubble.pack(side=tk.RIGHT, padx=(50, 0))
-
-        lbl = tk.Label(
-            bubble, text=text,
-            font=("Microsoft YaHei UI", 11),
-            fg=COLORS["text"], bg="#DBEAFE",
-            wraplength=500, justify="left",
-        )
-        lbl.pack(padx=16, pady=10)
-
-    def _add_ai_bubble(self) -> None:
-        row = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
-        row.pack(fill=tk.X, pady=(4, 8))
-        row._role = "assistant"
-        row._text = ""
-
-        icon = tk.Label(
-            row, text="\U0001F916",
-            font=("Segoe UI Emoji", 16), bg=COLORS["bg"],
-        )
-        icon.pack(side=tk.LEFT, padx=(4, 8))
-        icon.pack_propagate(False)
-        icon.configure(width=28, height=28)
-
-        bubble = tk.Frame(row, bg="white")
-        bubble.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-
-        self._current_answer_entry = tk.Text(
-            bubble,
-            font=("Microsoft YaHei UI", 11),
-            bg="white", fg=COLORS["text"],
-            wrap="word", bd=0, relief="flat",
-            padx=16, pady=10,
-        )
-        self._current_answer_entry.pack(fill=tk.X)
-        configure_answer_tags(self._current_answer_entry)
-        self._current_answer_entry.insert("end", "\U0001F4AD 正在思考...", "para")
-        self._current_answer_entry.config(state="disabled")
-        self._stream_initialized = False
-
+    def _insert_loading(self) -> None:
+        self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
+        self._loading_pos = self._chat_widget.index("end-1c")
+        self._chat_widget.insert("end", "思考中", "loading")
         self._auto_scroll()
 
-    def _answer_thread(self, question: str) -> None:
+    def _start_loading_animation(self) -> None:
+        self._loading_running = True
+        self._loading_frame = 0
+        self._animate_loading()
+
+    def _animate_loading(self) -> None:
+        if not self._loading_running or not self._loading_pos:
+            return
+        frames = ["思考中", "思考中.", "思考中..", "思考中..."]
+        self._loading_frame = (self._loading_frame + 1) % 4
+        try:
+            self._chat_widget.config(state="normal")
+            self._chat_widget.delete(self._loading_pos, "end-1c")
+            self._chat_widget.insert(self._loading_pos, frames[self._loading_frame], "loading")
+            self._chat_widget.config(state="disabled")
+        except Exception:
+            pass
+        self._parent.after(400, self._animate_loading)
+
+    def _stop_loading(self) -> None:
+        self._loading_running = False
+
+    def _background_flow(self, question: str) -> None:
         kb_content = ""
         web_results: list[dict] = []
         web_parts: list[str] = []
@@ -422,22 +409,22 @@ class WebPanel:
         t_web = threading.Thread(target=do_web, daemon=True)
         t_kb.start()
         t_web.start()
-
         t_kb.join(timeout=8)
         t_web.join(timeout=8)
 
         web_content = "\n\n".join(web_parts) if web_parts else ""
-        self._call_ai_service(question, kb_content, web_content, web_results)
+        self._do_ai_call(question, kb_content, web_content, web_results)
 
-    def _call_ai_service(self, question: str, kb_content: str, web_content: str,
-                         web_results: list[dict]) -> None:
+    def _do_ai_call(self, question: str, kb_content: str, web_content: str,
+                    web_results: list[dict]) -> None:
         conv = self._conversations.get(self._active_conv_id) if self._active_conv_id else None
         history = conv["history"].copy() if conv and conv["history"] else None
 
-        def stream_callback(current_text: str) -> None:
+        def stream_callback(raw_text: str) -> None:
             if self._answer_cancelled:
                 return
-            self._parent.after(30, lambda: self._update_answer_text(current_text))
+            text = _clean_text(raw_text)
+            self._parent.after(20, lambda: self._stream_update(text))
 
         def ai_call() -> str:
             if self._ai_provider == "ollama":
@@ -463,35 +450,37 @@ class WebPanel:
                 )
             return "请先在设置中选择一个可用的AI服务"
 
-        def run_in_thread() -> None:
-            try:
-                final_text = ai_call()
-                if final_text and not self._answer_cancelled:
-                    self._parent.after(0, lambda: self._finalize_answer(final_text))
-                elif self._answer_cancelled:
-                    self._parent.after(0, lambda: self._finalize_answer("[用户已停止]"))
-            except Exception as e:
-                self._parent.after(0, lambda: self._finalize_answer(f"[错误] AI调用失败：{str(e)}"))
-
-        threading.Thread(target=run_in_thread, daemon=True).start()
-
-    def _update_answer_text(self, text: str) -> None:
-        widget = self._current_answer_entry
-        if not widget:
-            return
         try:
-            widget.config(state="normal")
-            if not self._stream_initialized:
-                widget.delete("1.0", "end")
-                self._stream_initialized = True
-                self._last_rendered_len = 0
-            new_chunk = text[self._last_rendered_len:]
-            if new_chunk:
-                widget.insert("end", new_chunk)
-                self._last_rendered_len = len(text)
-                lines = int(widget.index("end-1c").split(".")[0])
-                widget.config(height=min(max(4, lines + 1), 40))
-            widget.config(state="disabled")
+            final_text = ai_call()
+            cleaned = _clean_text(final_text) if final_text else ""
+            if cleaned and not self._answer_cancelled:
+                self._parent.after(0, lambda: self._finalize_answer(cleaned))
+            elif self._answer_cancelled:
+                self._parent.after(0, lambda: self._finalize_answer(""))
+        except Exception as e:
+            self._parent.after(0, lambda: self._finalize_answer(""))
+
+    def _stream_update(self, text: str) -> None:
+        try:
+            self._chat_widget.config(state="normal")
+
+            if self._first_chunk:
+                self._stop_loading()
+                if self._loading_pos:
+                    self._chat_widget.delete(self._loading_pos, "end-1c")
+                    self._ai_start_pos = self._chat_widget.index("end-1c")
+                else:
+                    self._chat_widget.insert("end", "\U0001F916  ", "ai_icon")
+                    self._ai_start_pos = self._chat_widget.index("end-1c")
+                self._chat_widget.insert(self._ai_start_pos, text, "ai")
+                self._stream_buffer = text
+                self._first_chunk = False
+            else:
+                self._chat_widget.delete(self._ai_start_pos, "end-1c")
+                self._chat_widget.insert(self._ai_start_pos, text, "ai")
+                self._stream_buffer = text
+
+            self._chat_widget.config(state="disabled")
             self._auto_scroll()
         except Exception:
             pass
@@ -500,39 +489,24 @@ class WebPanel:
         self._is_answering = False
         self.send_btn.config(text="\u25B6 发送", bg=COLORS["primary"])
 
-        widget = self._current_answer_entry
-        if not widget:
+        self._stop_loading()
+        if not text:
+            if self._loading_pos:
+                try:
+                    self._chat_widget.config(state="normal")
+                    self._chat_widget.delete(self._loading_pos, "end-1c")
+                    self._chat_widget.config(state="disabled")
+                except Exception:
+                    pass
             return
 
-        try:
-            widget.config(state="normal")
-            widget.delete("1.0", "end")
-            render_rich_text(widget, text)
-            lines = int(widget.index("end-1c").split(".")[0])
-            widget.config(height=min(max(4, lines + 1), 40))
-            widget.config(state="disabled")
-            self._auto_scroll()
-        except Exception:
-            pass
-
-        if text and "[错误]" not in text and self._active_conv_id:
+        if self._active_conv_id:
             conv = self._conversations.get(self._active_conv_id)
             if conv:
-                conv["history"].append({"role": "user", "content": self._get_last_question()})
+                conv["messages"].append({"role": "assistant", "text": text})
+                conv["history"].append({"role": "user", "content": self._stream_buffer or ""})
                 conv["history"].append({"role": "assistant", "content": text[:2000]})
                 if len(conv["history"]) > 12:
                     conv["history"] = conv["history"][2:]
-                self._save_current_messages()
 
-    def _get_last_question(self) -> str:
-        for child in reversed(self._scrollable_frame.winfo_children()):
-            txt = getattr(child, "_question_text", "")
-            if txt:
-                return txt
-        return ""
-
-    def _auto_scroll(self) -> None:
-        try:
-            self._canvas.yview_moveto(1.0)
-        except Exception:
-            pass
+        self._loading_pos = None
