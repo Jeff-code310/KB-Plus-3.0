@@ -133,9 +133,12 @@ def _build_ollama_messages(question: str, kb_content: str, web_content: str) -> 
 
 
 def call_ollama(question: str, kb_content: str, web_content: str,
-                stream_callback: callable = None, cancelled_flag: callable = lambda: False) -> str:
+                stream_callback: callable = None, cancelled_flag: callable = lambda: False,
+                history: list[dict] | None = None) -> str:
     config = AI_CONFIGS["ollama"]
     messages = _build_ollama_messages(question, kb_content, web_content)
+    if history:
+        messages = messages[:1] + history + messages[1:]
     data = {
         "model": config["model"],
         "messages": messages,
@@ -190,7 +193,8 @@ def call_ollama(question: str, kb_content: str, web_content: str,
 def call_openai_compat(provider: str, question: str, kb_content: str,
                        web_content: str, api_key: str = "",
                        stream_callback: callable = None,
-                       cancelled_flag: callable = lambda: False) -> str:
+                       cancelled_flag: callable = lambda: False,
+                       history: list[dict] | None = None) -> str:
     config = AI_CONFIGS.get(provider)
     if not config:
         return "AI服务配置错误，请检查设置"
@@ -202,12 +206,16 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
         headers["Authorization"] = f"Bearer {api_key}"
 
     prompt = _build_prompt(question, kb_content, web_content)
+    messages = [
+        {"role": "system", "content": INDUSTRY_SYSTEM_PROMPT},
+    ]
+    if history:
+        messages += history
+    messages.append({"role": "user", "content": prompt})
+
     data = {
         "model": config["model"],
-        "messages": [
-            {"role": "system", "content": INDUSTRY_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": messages,
         "temperature": 0.7,
         "max_tokens": 2048,
         "stream": True,

@@ -19,6 +19,9 @@ class WebPanel:
         self._answer_cancelled: bool = False
         self._kb_cache: str = ""
         self._kb_cached: bool = False
+        self._conversation_history: list[dict] = []
+        self._current_answer_text: tk.Text | None = None
+        self._history_max_rounds: int = 6
 
         self.web_var = tk.StringVar()
 
@@ -70,15 +73,52 @@ class WebPanel:
         )
         self.answer_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=12)
 
+        self.new_btn = tk.Button(
+            wc, text="\U0001F504 新对话",
+            font=("Microsoft YaHei UI", 10),
+            bg="white", fg="#64748B",
+            bd=1, relief="solid", cursor="hand2",
+            padx=12, pady=6,
+            command=self._new_conversation,
+        )
+        self.new_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=12)
+
     def _build_web_content(self) -> None:
         self.web_content = tk.Frame(self._frame, bg=COLORS["bg"])
         self.web_content.pack(fill=tk.BOTH, expand=True, padx=30, pady=(0, 20))
 
         self.thinking_frame = tk.Frame(self.web_content, bg="white")
-        self.thinking_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self.thinking_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.answer_frame = tk.Frame(self.web_content, bg="white")
-        self._build_answer_initial(self.answer_frame)
+        self._answer_container = tk.Frame(self.web_content, bg="white")
+        self._canvas = tk.Canvas(
+            self._answer_container, bg="white",
+            highlightthickness=0,
+        )
+        self._scrollbar = tk.Scrollbar(
+            self._answer_container, orient="vertical",
+            command=self._canvas.yview,
+        )
+        self._scrollable_frame = tk.Frame(self._canvas, bg="white")
+
+        self._scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self._canvas.configure(
+                scrollregion=self._canvas.bbox("all"),
+            ),
+        )
+        self._canvas.create_window(
+            (0, 0), window=self._scrollable_frame, anchor="nw", tags="inner",
+        )
+        self._canvas.bind(
+            "<Configure>",
+            lambda e: self._canvas.itemconfig(
+                "inner", width=e.width,
+            ),
+        )
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+
+        self._build_answer_initial(self.thinking_frame)
 
     def _build_answer_initial(self, parent: tk.Frame) -> None:
         for w in parent.winfo_children():
@@ -130,10 +170,10 @@ class WebPanel:
         self._answer_cancelled = False
         self.answer_btn.config(text="停止", bg="#EF4444")
 
-        self.answer_frame.pack_forget()
-        self.thinking_frame.pack(fill=tk.BOTH, expand=True)
-        self.thinking = ThinkingAnimation(self.thinking_frame)
-        self.thinking.start()
+        self.thinking_frame.pack_forget()
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self._answer_container.pack(fill=tk.BOTH, expand=True)
 
         threading.Thread(target=self._answer_thread, args=(question,), daemon=True).start()
 
@@ -168,7 +208,7 @@ class WebPanel:
 
         web_content = "\n\n".join(web_parts) if web_parts else ""
 
-        self._parent.after(200, lambda: self._render_answer(question, kb_content, web_content, web_results))
+        self._parent.after(200, lambda: self._append_answer_card(question, kb_content, web_content, web_results))
 
     def _show_stage_hint(self, text: str) -> None:
         try:
@@ -188,22 +228,18 @@ class WebPanel:
         except Exception:
             pass
 
-    def _render_answer(self, question: str, kb_content: str, web_content: str,
-                       web_results: list[dict]) -> None:
+    def _append_answer_card(self, question: str, kb_content: str, web_content: str,
+                          web_results: list[dict]) -> None:
         if self._answer_cancelled:
             self._is_answering = False
             self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
             return
 
-        self.thinking.stop()
-        self.thinking_frame.pack_forget()
-        self.answer_frame.pack(fill=tk.BOTH, expand=True)
+        card = tk.Frame(self._scrollable_frame, bg="white")
+        card.pack(fill=tk.X, padx=0, pady=(0, 10))
 
-        for w in self.answer_frame.winfo_children():
-            w.destroy()
-
-        qh = tk.Frame(self.answer_frame, bg=COLORS["primary"])
-        qh.pack(fill=tk.X, padx=0, pady=(0, 0))
+        qh = tk.Frame(card, bg=COLORS["primary"])
+        qh.pack(fill=tk.X)
         tk.Label(
             qh, text=f"Q: {question}",
             font=("Microsoft YaHei UI", 13, "bold"),
@@ -211,19 +247,27 @@ class WebPanel:
             wraplength=800, justify="left",
         ).pack(fill=tk.X, padx=20, pady=15)
 
-        self.answer_text = tk.Text(
-            self.answer_frame,
+        answer_text = tk.Text(
+            card,
             font=("Microsoft YaHei UI", 11),
-            bg="white", fg=COLORS["text"],
+            bg=COLORS["search_bg"], fg=COLORS["text"],
             wrap="word", bd=0, relief="flat",
             padx=25, pady=20,
+            height=8,
         )
-        self.answer_text.pack(fill=tk.BOTH, expand=True)
-        configure_answer_tags(self.answer_text)
-        self.answer_text.insert("end", "\u2728 正在生成专业回答...", "para")
-        self.answer_text.config(state="disabled")
+        answer_text.pack(fill=tk.X)
+        configure_answer_tags(answer_text)
+
+        separator = tk.Frame(card, bg="#E2E8F0", height=1)
+        separator.pack(fill=tk.X, pady=(0, 0))
+
+        answer_text.insert("end", "\u2728 正在生成回答...", "para")
+        answer_text.config(state="disabled")
+
+        self._current_answer_text = answer_text
 
         self._call_ai_service(question, kb_content, web_content, web_results)
+        self._auto_scroll()
 
     def _call_ai_service(self, question: str, kb_content: str, web_content: str,
                          web_results: list[dict]) -> None:
@@ -232,12 +276,15 @@ class WebPanel:
                 return
             self._parent.after(50, lambda: self._update_answer_text(current_text, web_results))
 
+        history = self._conversation_history.copy() if self._conversation_history else None
+
         def ai_call() -> str:
             if self._ai_provider == "ollama":
                 return call_ollama(
                     question, kb_content, web_content,
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
+                    history=history,
                 )
             if self._ai_provider == "zhipu_cloud":
                 return call_zhipu_websearch(
@@ -251,6 +298,7 @@ class WebPanel:
                     api_key=self._api_key,
                     stream_callback=stream_callback,
                     cancelled_flag=lambda: self._answer_cancelled,
+                    history=history,
                 )
             return "请先在设置中选择一个可用的AI服务"
 
@@ -268,21 +316,15 @@ class WebPanel:
         threading.Thread(target=run_in_thread, daemon=True).start()
 
     def _update_answer_text(self, text: str, web_results: list[dict]) -> None:
+        widget = self._current_answer_text
+        if not widget:
+            return
         try:
-            self.answer_text.config(state="normal")
-            self.answer_text.delete("1.0", "end")
-            render_rich_text(self.answer_text, text)
-            if web_results:
-                self.answer_text.insert("end", "\n", "para")
-                self.answer_text.insert("end", "─" * 22 + "\n", "para")
-                self.answer_text.insert("end", "参考来源（点击打开）：\n", "ref_title")
-                for i, r in enumerate(web_results[:5], 1):
-                    title = r.get("title", "")
-                    url = r.get("url", "")
-                    if title and url:
-                        self.answer_text.insert("end", f"{i}. {title[:60]}", "link")
-                        self.answer_text.insert("end", "\n", "para")
-            self.answer_text.config(state="disabled")
+            widget.config(state="normal")
+            widget.delete("1.0", "end")
+            render_rich_text(widget, text)
+            widget.config(state="disabled")
+            self._auto_scroll()
         except Exception:
             pass
 
@@ -290,23 +332,43 @@ class WebPanel:
         self._is_answering = False
         self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
 
+        widget = self._current_answer_text
+        if not widget:
+            return
+
         try:
-            self.answer_text.config(state="normal")
-            self.answer_text.delete("1.0", "end")
-            render_rich_text(self.answer_text, text)
-            if web_results:
-                self.answer_text.insert("end", "\n", "para")
-                self.answer_text.insert("end", "─" * 22 + "\n", "para")
-                self.answer_text.insert("end", "参考来源（点击打开）：\n", "ref_title")
-                for i, r in enumerate(web_results[:5], 1):
-                    title = r.get("title", "")
-                    url = r.get("url", "")
-                    if title and url:
-                        self.answer_text.insert("end", f"{i}. {title[:60]}", "link")
-                        self.answer_text.insert("end", "\n", "para")
-            self.answer_text.config(state="disabled")
+            widget.config(state="normal")
+            widget.delete("1.0", "end")
+            render_rich_text(widget, text)
+            widget.config(state="disabled")
+            self._auto_scroll()
         except Exception:
             pass
 
-    def clear_answer(self) -> None:
-        self._build_answer_initial(self.answer_frame)
+        if text and "[错误]" not in text:
+            self._conversation_history.append({"role": "user", "content": self.web_var.get().strip()})
+            self._conversation_history.append({"role": "assistant", "content": text[:2000]})
+            if len(self._conversation_history) > self._history_max_rounds * 2:
+                self._conversation_history = self._conversation_history[2:]
+
+    def _new_conversation(self) -> None:
+        if self._is_answering:
+            self._answer_cancelled = True
+        self._is_answering = False
+        self._answer_cancelled = False
+        self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
+        self._conversation_history.clear()
+        self._current_answer_text = None
+        self._answer_container.pack_forget()
+        self._canvas.pack_forget()
+        self._scrollbar.pack_forget()
+        for w in self._scrollable_frame.winfo_children():
+            w.destroy()
+        self.thinking_frame.pack(fill=tk.BOTH, expand=True)
+        self._build_answer_initial(self.thinking_frame)
+
+    def _auto_scroll(self) -> None:
+        try:
+            self._canvas.yview_moveto(1.0)
+        except Exception:
+            pass
