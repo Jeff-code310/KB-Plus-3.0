@@ -36,42 +36,47 @@ class FileSearcher:
 
         kb_parts: list[tuple[int, str, str]] = []
         seen_files: set[str] = set()
-        file_count = 0
-        MAX_FILES = 30
         MAX_RESULTS = 10
 
         for base_path in paths:
-            if not os.path.exists(base_path) or file_count >= MAX_FILES:
+            if not os.path.exists(base_path):
                 continue
-            try:
-                for root, dirs, files in os.walk(base_path):
-                    dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith("$")]
-                    for fname in files:
-                        if file_count >= MAX_FILES:
-                            break
-                        ext = os.path.splitext(fname)[1].lower()
-                        if ext not in TEXT_CONTENT_EXTENSIONS:
-                            continue
-                        fpath = os.path.join(root, fname)
-                        if fpath in seen_files:
-                            continue
-                        seen_files.add(fpath)
-                        file_count += 1
-                        fname_lower = fname.lower()
-                        name_match = sum(1 for w in words if w in fname_lower)
-                        content = read_file_chunk(fpath, 1500)
-                        if content is None:
-                            continue
-                        content_lower = content.lower()
-                        content_match = sum(1 for w in words if w in content_lower)
-                        score = name_match * 5 + content_match
-                        if score > 0:
-                            snippet = content[:800]
-                            kb_parts.append((score, fname, snippet))
-            except PermissionError:
-                pass
-            except Exception as e:
-                logging.warning(f"扫描目录异常 {base_path}: {e}")
+
+            if self._cache_valid and base_path in self._file_cache:
+                file_list = self._file_cache[base_path]
+            else:
+                file_list: list[tuple[str, str, str]] = []
+                try:
+                    for root, dirs, files in os.walk(base_path):
+                        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith("$")]
+                        for fname in files:
+                            ext = os.path.splitext(fname)[1].lower()
+                            if ext not in TEXT_CONTENT_EXTENSIONS:
+                                continue
+                            fpath = os.path.join(root, fname)
+                            if fpath in seen_files:
+                                continue
+                            seen_files.add(fpath)
+                            content = read_file_chunk(fpath, 1500)
+                            if content is None:
+                                continue
+                            file_list.append((fpath, fname, content))
+                except PermissionError:
+                    pass
+                except Exception as e:
+                    logging.warning(f"扫描目录异常 {base_path}: {e}")
+                self._file_cache[base_path] = file_list
+            self._cache_valid = True
+
+            for fpath, fname, content in file_list:
+                fname_lower = fname.lower()
+                name_match = sum(1 for w in words if w in fname_lower)
+                content_lower = content.lower()
+                content_match = sum(1 for w in words if w in content_lower)
+                score = name_match * 5 + content_match
+                if score > 0:
+                    snippet = content[:800]
+                    kb_parts.append((score, fname, snippet))
 
         if not kb_parts:
             return ""

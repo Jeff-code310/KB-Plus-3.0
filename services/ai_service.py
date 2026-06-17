@@ -170,7 +170,7 @@ def call_ollama(question: str, kb_content: str, web_content: str,
                                 full_response.append(content)
                                 current = "".join(full_response)
                                 new_chars = len(current) - last_stream_len
-                                if new_chars >= 3 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
+                                if new_chars >= 1 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 8:
                                     last_stream_len = len(current)
                                     if stream_callback:
                                         stream_callback(current)
@@ -243,7 +243,7 @@ def call_openai_compat(provider: str, question: str, kb_content: str,
                                 full_response.append(content)
                                 current = "".join(full_response)
                                 new_chars = len(current) - last_stream_len
-                                if new_chars >= 3 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
+                                if new_chars >= 1 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 8:
                                     last_stream_len = len(current)
                                     if stream_callback:
                                         stream_callback(current)
@@ -321,7 +321,7 @@ def call_zhipu_websearch(question: str, kb_content: str, api_key: str,
                             full_response.append(content)
                             current = "".join(full_response)
                             new_chars = len(current) - last_stream_len
-                            if new_chars >= 3 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 15:
+                            if new_chars >= 1 or content in "。！？!?；，、\n" or len(current) - last_stream_len >= 8:
                                 last_stream_len = len(current)
                                 if stream_callback:
                                     stream_callback(current)
