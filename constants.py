@@ -16,6 +16,10 @@ COLORS = {
     "border": "#E2E8F0",
     "search_bg": "#F8FAFC",
     "answer_bg": "#F0F9FF",
+    "chat_user": "#DBEAFE",
+    "chat_ai": "#FFFFFF",
+    "chat_border": "#E2E8F0",
+    "chat_input_bg": "#FFFFFF",
 }
 
 AI_CONFIGS = {

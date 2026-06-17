@@ -5,7 +5,7 @@ from constants import COLORS, N_WEB
 from services.ai_service import call_ollama, call_openai_compat, call_zhipu_websearch
 from services.web_searcher import search_bing
 from services.file_searcher import FileSearcher
-from ui.widgets import ThinkingAnimation, configure_answer_tags, render_rich_text, append_references
+from ui.widgets import configure_answer_tags, render_rich_text
 
 
 class WebPanel:
@@ -26,8 +26,9 @@ class WebPanel:
         self.web_var = tk.StringVar()
 
         self._frame = tk.Frame(parent, bg=COLORS["bg"])
-        self._build_web_bar()
-        self._build_web_content()
+        self._build_top_bar()
+        self._build_chat_area()
+        self._build_input_bar()
 
     @property
     def frame(self) -> tk.Frame:
@@ -38,68 +39,39 @@ class WebPanel:
         self._ai_provider = ai_provider
         self._api_key = api_key
 
-    def _build_web_bar(self) -> None:
-        wa = tk.Frame(self._frame, bg=COLORS["bg"], pady=20)
-        wa.pack(fill=tk.X, padx=30)
-
-        wc = tk.Frame(wa, bg="white")
-        wc.pack(fill=tk.X)
+    def _build_top_bar(self) -> None:
+        bar = tk.Frame(self._frame, bg="white", height=50)
+        bar.pack(fill=tk.X, padx=20, pady=(10, 0))
+        bar.pack_propagate(False)
 
         tk.Label(
-            wc, text="\u2728",
-            font=("Segoe UI Emoji", 18), bg="white",
-        ).pack(side=tk.LEFT, padx=(20, 10), pady=15)
-
-        self.web_entry = tk.Entry(
-            wc, textvariable=self.web_var,
-            font=("Microsoft YaHei UI", 16),
-            bg=COLORS["search_bg"], fg=COLORS["text"],
-            bd=0, relief="flat",
-        )
-        self.web_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, pady=15)
-        self.web_entry.insert(0, "向AI助手提问，例如：最新的行业标准有哪些？")
-        self.web_entry.config(fg=COLORS["text_light"])
-        self.web_entry.bind("<Return>", lambda e: self._answer_question())
-        self.web_entry.bind("<FocusIn>", self._on_web_focus)
-        self.web_entry.bind("<FocusOut>", self._on_web_blur)
-
-        self.answer_btn = tk.Button(
-            wc, text="生成回答",
+            bar, text="\U0001F916 AI智能问答",
             font=("Microsoft YaHei UI", 12, "bold"),
-            bg=COLORS["primary"], fg="white",
-            bd=0, relief="flat", cursor="hand2",
-            padx=30, pady=10,
-            command=self._on_answer_click,
-        )
-        self.answer_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=12)
+            fg=COLORS["text"], bg="white",
+        ).pack(side=tk.LEFT, padx=(16, 0))
 
-        self.new_btn = tk.Button(
-            wc, text="\U0001F504 新对话",
+        tk.Button(
+            bar, text="\U0001F504 新对话",
             font=("Microsoft YaHei UI", 10),
             bg="white", fg="#64748B",
             bd=1, relief="solid", cursor="hand2",
-            padx=12, pady=6,
+            padx=12, pady=4,
             command=self._new_conversation,
-        )
-        self.new_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=12)
+        ).pack(side=tk.RIGHT, padx=(0, 16))
 
-    def _build_web_content(self) -> None:
-        self.web_content = tk.Frame(self._frame, bg=COLORS["bg"])
-        self.web_content.pack(fill=tk.BOTH, expand=True, padx=30, pady=(0, 20))
+    def _build_chat_area(self) -> None:
+        container = tk.Frame(self._frame, bg=COLORS["bg"])
+        container.pack(fill=tk.BOTH, expand=True, padx=20, pady=(10, 0))
 
-        self.thinking_frame = tk.Frame(self.web_content, bg="white")
-        self.thinking_frame.pack(fill=tk.BOTH, expand=True)
-
-        self._answer_container = tk.Frame(self.web_content, bg="white")
         self._canvas = tk.Canvas(
-            self._answer_container, bg="white",
+            container, bg=COLORS["bg"],
             highlightthickness=0,
         )
-        self._scrollbar = tk.Scrollbar(
-            self._answer_container, orient="vertical",
+        scrollbar = tk.Scrollbar(
+            container, orient="vertical",
             command=self._canvas.yview,
         )
-        self._scrollable_frame = tk.Frame(self._canvas, bg="white")
+        self._scrollable_frame = tk.Frame(self._canvas, bg=COLORS["bg"])
 
         self._scrollable_frame.bind(
             "<Configure>",
@@ -112,50 +84,79 @@ class WebPanel:
         )
         self._canvas.bind(
             "<Configure>",
-            lambda e: self._canvas.itemconfig(
-                "inner", width=e.width,
-            ),
+            lambda e: self._canvas.itemconfig("inner", width=e.width - 8),
         )
-        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._canvas.configure(yscrollcommand=scrollbar.set)
+        self._canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        self._build_answer_initial(self.thinking_frame)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-    def _build_answer_initial(self, parent: tk.Frame) -> None:
-        for w in parent.winfo_children():
-            w.destroy()
+        self._build_welcome()
 
+    def _build_welcome(self) -> None:
+        f = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
+        f.pack(expand=True, pady=(100, 0))
         tk.Label(
-            parent, text="\U0001F31F AI智能问答",
+            f, text="\U0001F31F",
+            font=("Segoe UI Emoji", 36), bg=COLORS["bg"],
+        ).pack()
+        tk.Label(
+            f, text="向你提问",
             font=("Microsoft YaHei UI", 14, "bold"),
-            fg=COLORS["text"], bg="white",
-        ).pack(pady=(80, 10))
-
+            fg=COLORS["text"], bg=COLORS["bg"],
+        ).pack(pady=(8, 4))
         tk.Label(
-            parent,
-            text="\U0001F4A1 输入问题，AI将结合知识库和网络信息为您提供专业回答",
-            font=("Microsoft YaHei UI", 11),
-            fg=COLORS["text_light"], bg="white", wraplength=600,
-            justify="center",
-        ).pack(pady=10)
-
-        tk.Label(
-            parent,
-            text="\u25CF 整合知识库+  \u25CF 联网搜索+  \u25CF 智能分析",
+            f, text="AI 会结合知识库与联网搜索为你提供专业回答",
             font=("Microsoft YaHei UI", 10),
-            fg=COLORS["text_light"], bg="white",
-        ).pack(pady=10)
+            fg=COLORS["text_light"], bg=COLORS["bg"],
+        ).pack()
 
-    def _on_web_focus(self, event: tk.Event) -> None:
-        if self.web_var.get() == "向AI助手提问，例如：最新的行业标准有哪些？":
+    def _build_input_bar(self) -> None:
+        bar = tk.Frame(self._frame, bg="white", height=56)
+        bar.pack(fill=tk.X, padx=20, pady=(8, 12))
+        bar.pack_propagate(False)
+
+        inner = tk.Frame(bar, bg=COLORS["chat_input_bg"])
+        inner.pack(fill=tk.BOTH, padx=12, pady=8)
+
+        self.web_entry = tk.Entry(
+            inner, textvariable=self.web_var,
+            font=("Microsoft YaHei UI", 13),
+            bg=COLORS["search_bg"], fg=COLORS["text"],
+            bd=0, relief="flat",
+        )
+        self.web_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 8))
+        self.web_entry.insert(0, "向 AI 提问...")
+        self.web_entry.config(fg=COLORS["text_light"])
+        self.web_entry.bind("<Return>", lambda e: self._answer_question())
+        self.web_entry.bind("<FocusIn>", self._on_entry_focus)
+        self.web_entry.bind("<FocusOut>", self._on_entry_blur)
+
+        self.send_btn = tk.Button(
+            inner, text="\u25B6 发送",
+            font=("Microsoft YaHei UI", 11, "bold"),
+            bg=COLORS["primary"], fg="white",
+            bd=0, relief="flat", cursor="hand2",
+            padx=20, pady=6,
+            command=self._on_send_click,
+        )
+        self.send_btn.pack(side=tk.RIGHT)
+
+    def _on_entry_focus(self, _: tk.Event) -> None:
+        if self.web_var.get() == "向 AI 提问...":
             self.web_entry.delete(0, tk.END)
             self.web_entry.config(fg=COLORS["text"])
 
-    def _on_web_blur(self, event: tk.Event) -> None:
+    def _on_entry_blur(self, _: tk.Event) -> None:
         if not self.web_var.get():
-            self.web_entry.insert(0, "向AI助手提问，例如：最新的行业标准有哪些？")
+            self.web_entry.insert(0, "向 AI 提问...")
             self.web_entry.config(fg=COLORS["text_light"])
 
-    def _on_answer_click(self) -> None:
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_send_click(self) -> None:
         if self._is_answering:
             self._answer_cancelled = True
         else:
@@ -163,19 +164,69 @@ class WebPanel:
 
     def _answer_question(self) -> None:
         question = self.web_var.get().strip()
-        if question in ("", "向AI助手提问，例如：最新的行业标准有哪些？"):
+        if question in ("", "向 AI 提问..."):
             return
 
         self._is_answering = True
         self._answer_cancelled = False
-        self.answer_btn.config(text="停止", bg="#EF4444")
+        self.send_btn.config(text="\u25A0 停止", bg="#EF4444")
 
-        self.thinking_frame.pack_forget()
-        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self._answer_container.pack(fill=tk.BOTH, expand=True)
+        self._add_user_bubble(question)
+        self._add_ai_bubble()
 
-        threading.Thread(target=self._answer_thread, args=(question,), daemon=True).start()
+        self._answer_thread(question)
+
+    def _add_user_bubble(self, text: str) -> None:
+        row = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
+        row.pack(fill=tk.X, pady=(4, 0))
+        row._question_text = text
+
+        spacer = tk.Frame(row, bg=COLORS["bg"], width=60)
+        spacer.pack(side=tk.LEFT)
+
+        bubble = tk.Frame(row, bg=COLORS["chat_user"])
+        bubble.pack(side=tk.RIGHT, padx=(50, 0))
+
+        lbl = tk.Label(
+            bubble, text=text,
+            font=("Microsoft YaHei UI", 11),
+            fg=COLORS["text"], bg=COLORS["chat_user"],
+            wraplength=500, justify="left",
+        )
+        lbl.pack(padx=16, pady=10)
+
+    def _add_ai_bubble(self, reply_to: str = "") -> None:
+        row = tk.Frame(self._scrollable_frame, bg=COLORS["bg"])
+        row.pack(fill=tk.X, pady=(4, 8))
+
+        icon = tk.Label(
+            row, text="\U0001F916",
+            font=("Segoe UI Emoji", 16), bg=COLORS["bg"],
+        )
+        icon.pack(side=tk.LEFT, padx=(4, 8))
+        icon.pack_propagate(False)
+        icon.configure(width=28, height=28)
+
+        bubble = tk.Frame(row, bg=COLORS["chat_ai"])
+        bubble.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
+        answer_text = tk.Text(
+            bubble,
+            font=("Microsoft YaHei UI", 11),
+            bg=COLORS["chat_ai"], fg=COLORS["text"],
+            wrap="word", bd=0, relief="flat",
+            padx=16, pady=10,
+            height=4,
+        )
+        answer_text.pack(fill=tk.X)
+        configure_answer_tags(answer_text)
+        answer_text.insert("end", "\U0001F4AD 正在思考...", "para")
+        answer_text.config(state="disabled")
+
+        answer_text._reply_to = reply_to
+        self._current_answer_text = answer_text
+
+        self._auto_scroll()
 
     def _answer_thread(self, question: str) -> None:
         kb_content = self._kb_cache if self._kb_cached else ""
@@ -202,79 +253,18 @@ class WebPanel:
         t_kb.start()
         t_web.start()
 
-        self._parent.after(0, lambda: self._show_stage_hint("\U0001F50D 正在检索知识库 + 联网搜索..."))
         t_kb.join(timeout=8)
         t_web.join(timeout=8)
 
         web_content = "\n\n".join(web_parts) if web_parts else ""
-
-        self._parent.after(200, lambda: self._append_answer_card(question, kb_content, web_content, web_results))
-
-    def _show_stage_hint(self, text: str) -> None:
-        try:
-            if not hasattr(self, "thinking_frame") or not self.thinking_frame.winfo_exists():
-                return
-            for w in self.thinking_frame.winfo_children():
-                if isinstance(w, tk.Label) and getattr(w, "_is_hint", False):
-                    w.config(text=text)
-                    return
-            hint = tk.Label(
-                self.thinking_frame, text=text,
-                font=("Microsoft YaHei UI", 11),
-                fg=COLORS["text_light"], bg="white",
-            )
-            hint._is_hint = True
-            hint.pack()
-        except Exception:
-            pass
-
-    def _append_answer_card(self, question: str, kb_content: str, web_content: str,
-                          web_results: list[dict]) -> None:
-        if self._answer_cancelled:
-            self._is_answering = False
-            self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
-            return
-
-        card = tk.Frame(self._scrollable_frame, bg="white")
-        card.pack(fill=tk.X, padx=0, pady=(0, 10))
-
-        qh = tk.Frame(card, bg=COLORS["primary"])
-        qh.pack(fill=tk.X)
-        tk.Label(
-            qh, text=f"Q: {question}",
-            font=("Microsoft YaHei UI", 13, "bold"),
-            fg="white", bg=COLORS["primary"],
-            wraplength=800, justify="left",
-        ).pack(fill=tk.X, padx=20, pady=15)
-
-        answer_text = tk.Text(
-            card,
-            font=("Microsoft YaHei UI", 11),
-            bg=COLORS["search_bg"], fg=COLORS["text"],
-            wrap="word", bd=0, relief="flat",
-            padx=25, pady=20,
-            height=8,
-        )
-        answer_text.pack(fill=tk.X)
-        configure_answer_tags(answer_text)
-
-        separator = tk.Frame(card, bg="#E2E8F0", height=1)
-        separator.pack(fill=tk.X, pady=(0, 0))
-
-        answer_text.insert("end", "\u2728 正在生成回答...", "para")
-        answer_text.config(state="disabled")
-
-        self._current_answer_text = answer_text
-
         self._call_ai_service(question, kb_content, web_content, web_results)
-        self._auto_scroll()
 
     def _call_ai_service(self, question: str, kb_content: str, web_content: str,
                          web_results: list[dict]) -> None:
         def stream_callback(current_text: str) -> None:
             if self._answer_cancelled:
                 return
-            self._parent.after(50, lambda: self._update_answer_text(current_text, web_results))
+            self._parent.after(50, lambda: self._update_answer_text(current_text))
 
         history = self._conversation_history.copy() if self._conversation_history else None
 
@@ -310,12 +300,11 @@ class WebPanel:
                 elif self._answer_cancelled:
                     self._parent.after(0, lambda: self._finalize_answer("[用户已停止]", []))
             except Exception as e:
-                err = f"[错误] AI调用失败：{str(e)}"
-                self._parent.after(0, lambda: self._finalize_answer(err, []))
+                self._parent.after(0, lambda: self._finalize_answer(f"[错误] AI调用失败：{str(e)}", []))
 
         threading.Thread(target=run_in_thread, daemon=True).start()
 
-    def _update_answer_text(self, text: str, web_results: list[dict]) -> None:
+    def _update_answer_text(self, text: str) -> None:
         widget = self._current_answer_text
         if not widget:
             return
@@ -330,7 +319,7 @@ class WebPanel:
 
     def _finalize_answer(self, text: str, web_results: list[dict]) -> None:
         self._is_answering = False
-        self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
+        self.send_btn.config(text="\u25B6 发送", bg=COLORS["primary"])
 
         widget = self._current_answer_text
         if not widget:
@@ -346,26 +335,31 @@ class WebPanel:
             pass
 
         if text and "[错误]" not in text:
-            self._conversation_history.append({"role": "user", "content": self.web_var.get().strip()})
-            self._conversation_history.append({"role": "assistant", "content": text[:2000]})
-            if len(self._conversation_history) > self._history_max_rounds * 2:
-                self._conversation_history = self._conversation_history[2:]
+            last_q = self._get_last_question()
+            if last_q:
+                self._conversation_history.append({"role": "user", "content": last_q})
+                self._conversation_history.append({"role": "assistant", "content": text[:2000]})
+                if len(self._conversation_history) > self._history_max_rounds * 2:
+                    self._conversation_history = self._conversation_history[2:]
+
+    def _get_last_question(self) -> str:
+        for child in reversed(self._scrollable_frame.winfo_children()):
+            txt = getattr(child, "_question_text", "")
+            if txt:
+                return txt
+        return ""
 
     def _new_conversation(self) -> None:
         if self._is_answering:
             self._answer_cancelled = True
         self._is_answering = False
         self._answer_cancelled = False
-        self.answer_btn.config(text="生成回答", bg=COLORS["primary"])
+        self.send_btn.config(text="\u25B6 发送", bg=COLORS["primary"])
         self._conversation_history.clear()
         self._current_answer_text = None
-        self._answer_container.pack_forget()
-        self._canvas.pack_forget()
-        self._scrollbar.pack_forget()
         for w in self._scrollable_frame.winfo_children():
             w.destroy()
-        self.thinking_frame.pack(fill=tk.BOTH, expand=True)
-        self._build_answer_initial(self.thinking_frame)
+        self._build_welcome()
 
     def _auto_scroll(self) -> None:
         try:
